@@ -1,0 +1,810 @@
+import rclpy
+from rclpy.node import Node
+from cv_bridge import CvBridge
+import cv2
+import numpy as np
+import math
+import time
+from std_msgs.msg import String, Float32
+from sensor_msgs.msg import Imu, LaserScan, Image
+from rclpy.qos import qos_profile_sensor_data
+import signal
+from signal import pause
+from buildhat import ForceSensor, Motor
+
+mMotor = Motor('C')
+button = ForceSensor('A', threshold_force=1)
+Servo_Pin = 18
+time.sleep(1.5)
+low_green=np.array([30,50,30])
+high_green=np.array([80,240,220])
+mMotor.set_default_speed(-30)
+#Red
+low_red=np.array([150,150,49])
+high_red=np.array([200,240,174])
+
+green_center_x = 0
+green_center_y = 0
+red_center_x = 0 
+red_center_y = 0
+
+button.wait_until_pressed(20)
+
+class Future(Node):
+
+    def __init__(self):
+        super().__init__('minimal_subscriber')
+        self.imuSub = self.create_subscription(
+            Float32,
+            '/imu/data_raw',
+            self.imu_callBack,
+            10)
+        self.laserSub = self.create_subscription(
+            LaserScan,
+            '/scan',
+            self.laser_callBack,
+            10)
+        self.imageSub = self.create_subscription(
+            Image,
+            '/video_frames',
+            self.image_callBack,
+            qos_profile_sensor_data)
+        self.create_timer(0.1, self.timer_callback)
+        self.imageSub  # prevent unused variable warning
+        self.imuSub  # prevent unused variable warning
+        self.laserSub  # prevent unused variable warning
+        self.br = CvBridge()
+        self.angle = 0.0
+        self.count = 0
+        self.yaw = 0.0
+        self.LastErrorImu = 0
+        self.LastTimeImu = 0
+        self.minMotor = 500
+        self.maxMotor = 1100
+        self.midMotor = 800
+        self.init_angle = False
+        self.start_angle = 0
+        self.step = 1
+        self.lab = 0
+        self.angle = 0
+        self.clockwise = False
+        self.checkClockwise = True
+        self.speed = 0
+        self.region_ = {
+            'right': 0,
+            'left': 0,
+            'front': 0,
+        }
+        self.turn = False
+        self.checkturn = False
+        self.tempAngle = 0
+        self.time = 0
+        self.sAngle = 0
+        self.inpsss = 0
+        self.lastInp = 0
+
+        self.pi = pigpio.pi()
+        self.pi.set_mode(Servo_Pin, pigpio.OUTPUT)
+        self.pi.set_PWM_frequency(Servo_Pin, 50)
+
+        self.pi.set_servo_pulsewidth(Servo_Pin, self.midMotor)
+        time.sleep(0.1)
+
+        self.begin = False
+        self.beginFront = 0
+        self.beginLeft = 0
+        self.beginRight = 0
+
+        self.left = False
+        self.right = False
+
+        self.stepCount = 0
+        self.ridarAngle = 0
+
+        self.detect = False
+        self.red = False
+        self.green = False
+        self.yRed = 0
+        self.yGreen = 0
+        self.xRed = 0
+        self.xGreen = 0
+
+        #force
+        self.force = False
+        # Green
+        self.cstep = 0
+        self.gx = 0
+        self.gTurn = 0
+        self.gstep = 0
+        self.green = False
+        self.checkTurn = False
+        self.gtime = 0
+        self.gang = 0
+        self.turnAng = 0
+        self.after = False
+        self.checkForce = 0
+
+        self.rTurn = 0
+        self.rstep = 0
+        self.red = False
+        self.rang = 0
+        self.rtime = 0
+
+        self.countTime = time.time() * 1000
+
+        self.y_red = 1
+        self.y_green = 1
+        self.r = False
+        self.g = False
+
+        self.diffLeft = False
+        self.diffRight = False
+
+        self.walkLeft = False
+        self.walkRight = False
+        self.ldval = 0
+        self.camval = 0 
+
+
+
+    def handle_pressed(self, force):
+        """Force sensor pressed
+
+        :param force: Force value
+        """
+        self.get_logger().info("Pressed: %d" %(force))
+        if(force > 10):
+            
+            self.checkForce = 1
+            # print("pressed", force)
+
+
+    def handle_released(self, force):
+        """Force sensor released
+
+        :param force: Force value
+        """
+        self.get_logger().info("released: %d" %(force))
+        if (force == 0 and self.checkForce == 1):
+           
+            self.checkForce = 2
+            # print("released", force)
+
+    def imu_callBack(self, msg):
+        self.yaw = msg.data
+        if(self.init_angle == False):
+            self.start_angle = self.yaw
+            self.init_angle = True
+        self.yaw = self.yaw - self.start_angle
+        if(self.yaw < 0):
+            self.yaw = self.yaw +359
+        elif(self.yaw > 359):
+            self.yaw = self.yaw -359
+        self.get_logger().info("yaw: %f" %(self.yaw))
+
+    def timer_callback(self):
+        if self.step != 8:
+            mMotor.start(-40)  
+            # mMotor.stop()
+        self.rg() 
+        # self.diffTurn()
+
+    def rg(self):
+        if(self.step == 1):  
+########################################################################################################
+            if(self.rstep == 0 and self.y_red >= self.y_green):  
+                if self.rTurn == 1:
+                    self.pi.set_servo_pulsewidth(Servo_Pin, self.maxMotor)
+                    self.checkTurn = True
+                    self.rang = self.yaw
+                elif self.rTurn == 2:
+                    self.pi.set_servo_pulsewidth(Servo_Pin, 1000)
+                    self.checkTurn = True
+                    self.rang = self.yaw
+                elif self.rTurn == 3:
+                    self.pi.set_servo_pulsewidth(Servo_Pin, 900)
+                    self.checkTurn = True
+                    self.rang = self.yaw
+                elif self.rTurn == 0:
+                    if self.checkTurn == True:
+                        self.rstep = 1
+                        self.rtime = time.time() * 1000
+                    else:
+                        self.imuFollow(self.angle, 10)
+            elif(self.rstep == 1):
+                self.imuFollow(self.rang, 10)
+                if((time.time() * 1000 - self.rtime) > 600):
+                    self.rstep = 2
+                    self.rtime = time.time() * 1000
+                    self.red = False
+            elif(self.rstep == 2):
+                self.imuFollow(self.angle, 10)
+                if((time.time() * 1000 - self.rtime) > 1000):
+                    self.rstep = 3
+                    self.rtime = time.time() * 1000   
+            elif(self.rstep == 3):
+                self.checkTurn = False
+                self.red = False
+                self.rstep = 0
+                self.rTurn = 0
+                self.r = False
+                self.after = False 
+                self.y_red = 0
+ ######################################################################################################
+            if(self.gstep == 0 and self.y_green >= self.y_red):  
+                if self.gTurn == 1:
+                    self.pi.set_servo_pulsewidth(Servo_Pin, self.minMotor)
+                    self.checkTurn = True
+                    self.gang = self.yaw
+                elif self.gTurn == 2:
+                    self.pi.set_servo_pulsewidth(Servo_Pin, 600)
+                    self.checkTurn = True
+                    self.gang = self.yaw
+                elif self.gTurn == 3:
+                    self.pi.set_servo_pulsewidth(Servo_Pin, 700)
+                    self.checkTurn = True
+                    self.gang = self.yaw
+                elif self.gTurn == 0:
+                    if self.checkTurn == True:
+                        self.gstep = 1
+                        self.gtime = time.time() * 1000
+                    else:
+                        self.imuFollow(self.angle, 10)
+            elif(self.gstep == 1):
+                self.imuFollow(self.gang, 10)
+                if((time.time() * 1000 - self.gtime) > 600):
+                    self.gstep = 2
+                    self.gtime = time.time() * 1000
+            elif(self.gstep == 2):
+                self.imuFollow(self.angle, 10)
+                if((time.time() * 1000 - self.gtime) > 1000):
+                    self.gstep = 3
+                    self.gtime = time.time() * 1000
+                    self.after = False
+            elif(self.gstep == 3):
+                self.checkTurn = False
+                self.green = False
+                self.gstep = 0
+                self.gTurn = 0
+                self.g = False
+                self.y_green = 0
+###################################################################################################################################            
+            
+            # if self.step == 10:
+            #     self.imuFollow(self.angle, 12)
+            
+########################################################################################################################               
+            if(self.region_['right'] >= 1 and self.region_['right'] < 10 and (abs(self.angle - self.yaw) < 10 or abs(self.angle - self.yaw) > 350) and self.after == False):
+                self.step = 2
+                self.walkRight = True
+                self.walkLeft = False
+                self.diffLeft = True
+                self.diffRight = False
+                if(self.gstep > 0):
+                    self.gstep = 10
+                    self.g = False
+                elif(self.rstep > 0):
+                    self.rstep = 10
+                    self.r = False
+                if(self.checkClockwise == True):
+                    self.clockwise = False
+                    self.checkClockwise = False
+                if(self.clockwise == False):
+                    self.tempAngle = self.angle
+                    self.angle = self.angle + 90
+                    if(self.angle < 0):
+                        self.angle = 270
+                    elif(self.angle > 359):
+                        self.angle = 0
+                    self.after = True
+                    
+
+            elif(self.region_['left'] >= 1 and self.region_['left'] < 10 and (abs(self.angle - self.yaw) < 10 or abs(self.angle - self.yaw) > 350) and self.after == False):
+                self.step = 2
+                self.walkRight = False
+                self.walkLeft = True
+                self.diffRight = True
+                self.diffLeft = False
+                if(self.gstep > 0):
+                    self.gstep = 10
+                    self.g = False
+                elif(self.rstep > 0):
+                    self.rstep = 10
+                    self.r = False
+                if(self.checkClockwise == True):
+                    self.clockwise = True
+                    self.checkClockwise = False
+                if(self.clockwise == True):
+                    self.tempAngle = self.angle
+                    self.angle = self.angle - 90
+                    if(self.angle > 359):
+                        self.angle = 0
+                    elif(self.angle < 0):
+                        self.angle = 270
+                    self.after = True
+
+##################################################################################################################
+        elif (self.step == 2):
+            if self.diffRight == True:
+                if self.region_['right'] < 0.4:
+                    self.imuFollow(self.tempAngle, 20)
+                    if(self.region_['front'] < 0.6):
+                        self.step = 6
+                        self.time = time.time() * 1000
+                if self.region_['right'] < 0.6 and self.region_['right'] >= 0.4:
+                    self.turnAng = self.tempAngle
+                    self.turnAng = self.turnAng + 95
+                    self.imuFollow(self.turnAng, 30)
+                    if(self.region_['front'] < 0.4):
+                        self.step = 3
+                        self.time = time.time() * 1000
+                if self.region_['right'] < 0.8 and self.region_['right'] >= 0.6:
+                    self.turnAng = self.tempAngle
+                    self.turnAng = self.turnAng + 95
+                    self.imuFollow(self.turnAng, 30)
+                    if(self.region_['front'] < 0.4):
+                        self.step = 3 
+                        self.time = time.time() * 1000 
+            if self.diffLeft == True:
+                if self.region_['left'] < 0.4:
+                    self.imuFollow(self.tempAngle, 20)
+                    if(self.region_['front'] < 0.6):
+                        self.step = 6
+                        self.time = time.time() * 1000
+                if self.region_['left'] < 0.6 and self.region_['left'] >= 0.4:
+                    self.turnAng = self.tempAngle
+                    self.turnAng = self.turnAng - 95
+                    self.imuFollow(self.turnAng, 30)
+                    if(self.region_['front'] < 0.4):
+                        self.step = 3 
+                        self.time = time.time() * 1000
+                if self.region_['left'] < 0.8 and self.region_['left'] >= 0.6:
+                    self.turnAng = self.tempAngle
+                    self.turnAng = self.turnAng - 95
+                    self.imuFollow(self.turnAng, 30)
+                    if(self.region_['front'] < 0.4):
+                        self.step = 3 
+                        self.time = time.time() * 1000 
+        elif (self.step == 6):
+            self.imuFollow(self.angle, 15)
+            if(abs(self.yaw-self.angle)<20 or abs(self.yaw-self.angle) > 340):
+                self.get_logger().info("out")
+                self.step = 5
+                self.time = time.time()*1000
+
+        elif (self.step == 3):
+            self.imuFollow(self.angle, 15)
+            if(abs(self.yaw-self.angle)<20 or abs(self.yaw-self.angle) > 340):
+                self.step = 4
+                self.time = time.time() * 1000 
+
+        elif (self.step == 4):
+            self.imuFollow(self.angle, 10)
+            if(time.time() * 1000 - self.time > 200):
+                self.step = 5
+        
+        elif (self.step == 5):
+            self.imuFollow(self.angle, 10)
+            self.step = 1
+            if(self.green == True):
+                self.green = False
+                self.gstep = 0
+                self.checkTurn = False
+                self.y_green = 0
+                self.gTurn = 0
+            if(self.red == True):
+                self.red = False
+                self.rstep = 0
+                self.checkTurn = False
+                self.y_red = 0
+                self.rTurn = 0
+            if(self.rstep > 0):
+                self.rstep = 0
+            if(self.gstep > 0):
+                self.gstep = 0
+        
+        elif (self.step == 8):
+            mMotor.stop()
+
+            
+            
+
+        self.get_logger().info("angle: %d yaw: %f left: %f right: %f front: %f after: %d " %(
+                            self.angle,
+                            self.yaw,
+                            self.region_['left'],
+                            self.region_['right'],
+                            self.region_['front'],
+                            self.after))
+        
+        self.get_logger().info("Green: %d step: %d gstep: %d gTurn: %d checkTurn: %d green: %f y: %d " %(
+                                    self.green,
+                                    self.step,
+                                    self.gstep,
+                                    self.gTurn,
+                                    self.checkTurn,
+                                    self.green,
+                                    self.y_green))
+        
+        self.get_logger().info("Red: %d step: %d rstep: %d rTurn: %d checkTurn: %d red: %f y: %d" %(
+                                    self.red,
+                                    self.step,
+                                    self.rstep,
+                                    self.rTurn,
+                                    self.checkTurn,
+                                    self.red,
+                                    self.y_red))
+
+#######################################################################################################################################
+#######################################################################################################################################
+
+
+    def imuFollow(self, heading, kp):
+        kd = 0.07
+        error = heading - int(self.yaw)
+        if(error > 180):
+            error = error - 360.0 
+        elif(error < -180):
+            error = error + 360.0
+        
+        CurrentTime = (time.time()*1000)
+        rateError = (error-self.LastErrorImu)/(CurrentTime-self.LastTimeImu)
+        self.LastErrorImu = error
+        self.LastErrorImu = CurrentTime
+        PD = int((kp*error)+(kd*rateError))
+        
+        pulseMotor = self.midMotor + PD
+        if (pulseMotor > self.maxMotor):
+            pulseMotor = self.maxMotor
+        if (pulseMotor < self.minMotor):
+            pulseMotor = self.minMotor 
+        self.pi.set_servo_pulsewidth(Servo_Pin, pulseMotor)
+
+    def laser_callBack(self, msg):
+        self.laserSub = msg
+        shift = 0
+        self.region_ = {
+            'right': (min(min(msg.ranges[200+shift:210+shift]),10)),
+            'front': (min(min(msg.ranges[113+shift:137+shift]),10)),
+            'left': (min(min(msg.ranges[5+shift:15+shift]),10)),
+            
+        }
+        if (self.begin == False):
+            
+            self.beginFront = self.region_['front']
+            self.beginRight = self.region_['right']
+            self.beginLeft = self.region_['left']
+            self.get_logger().info("front: %f left: %f right: %f" %(self.beginFront, self.beginLeft, self.beginRight))
+            self.begin = True
+        
+
+        
+    def image_callBack(self, msg):
+        global low_green, high_green, low_red, high_red, kernel, green_center_x, green_center_y, red_center_x, red_center_y
+        self.imageSub = msg
+        current_frame = self.br.imgmsg_to_cv2(msg)
+        hhb = cv2.cvtColor(current_frame, cv2.COLOR_BGR2HSV)
+
+        green_mask = cv2.inRange(hhb, low_green, high_green)
+        green_mask = cv2.erode(green_mask, kernel, iterations=1)
+        green = cv2.bitwise_and(current_frame, current_frame, mask=green_mask)
+
+        red_mask = cv2.inRange(hhb, low_red, high_red)
+        red_mask = cv2.erode(red_mask, kernel, iterations=1)
+        red = cv2.bitwise_and(current_frame, current_frame, mask=red_mask)
+        
+        mixed = cv2.bitwise_or(red, green)
+
+        green_contours, _ = cv2.findContours(green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        red_contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        if len(green_contours) > 0:
+           
+            contoursAreaGreen = []
+            for c in green_contours:
+                areaGreen = cv2.contourArea(c)
+                if areaGreen > 500:
+                    contoursAreaGreen.append(c)
+            if len(contoursAreaGreen)>0:
+                ymaxGreen = 0
+                xmaxGreen = 0
+                indexGreen = 0
+                iGreen = 0
+                for c in contoursAreaGreen:
+                    xGreen,yGreen,w,h = cv2.boundingRect(c)
+                    if yGreen > ymaxGreen:
+                        ymaxGreen = yGreen
+                        xmaxGreen = xGreen
+                        indexGreen = iGreen
+                    iGreen+= 1
+            
+                self.xGreen = xmaxGreen
+                self.yGreen = ymaxGreen                    
+
+                    if self.walkLeft == True:
+                        self.ldval = self.region_['left']
+                        self.camval = 70
+                    elif self.walkRight == True:
+                        self.ldval = self.region_['right']
+                        self.camval = 250
+                    if(green_center_y > 55):
+                        if self.walkLeft == True:
+                            if(self.ldval < 0.4 and green_center_x < self.camval):
+                                pass
+                            else:
+                                self.y_green = green_center_y
+                                self.green = True
+                                self.g = True
+                                if(green_center_x > 0 and green_center_x < 100):
+                                    self.gTurn = 1
+                                elif(green_center_x >= 100 and green_center_x < 220):
+                                    self.gTurn = 2
+                                elif(green_center_x >= 220 and green_center_x < 280):
+                                    self.gTurn = 3
+                                else:
+                                    self.gTurn = 0
+                                self.get_logger().info("green detect x: %f y: %f" %(green_center_x, green_center_y))
+                                cv2.rectangle(current_frame, (green_center_x - 10, green_center_y - 10), (green_center_x + 10, green_center_y + 10) , (0,255,0), 1)
+                                cv2.circle(current_frame, (green_center_x, green_center_y), 5, (0, 255, 0), -1)  # Draw green dot   
+            
+                        elif self.walkRight == True:
+                            if(self.ldval < 0.4 and green_center_x > self.camval):
+                                pass
+                            else:
+                                self.y_green = green_center_y
+                                self.green = True
+                                self.g = True
+                                if(green_center_x > 0 and green_center_x < 100):
+                                    self.gTurn = 1
+                                elif(green_center_x >= 100 and green_center_x < 220):
+                                    self.gTurn = 2
+                                elif(green_center_x >= 220 and green_center_x < 280):
+                                    self.gTurn = 3
+                                else:
+                                    self.gTurn = 0
+                                self.get_logger().info("green detect x: %f y: %f" %(green_center_x, green_center_y))
+                                cv2.rectangle(current_frame, (green_center_x - 10, green_center_y - 10), (green_center_x + 10, green_center_y + 10) , (0,255,0), 1)
+                                cv2.circle(current_frame, (green_center_x, green_center_y), 5, (0, 255, 0), -1)  # Draw green dot   
+
+                        elif (self.walkRight == False and self.walkLeft == False):
+                            self.y_green = green_center_y
+                            self.green = True
+                            self.g = True
+                            if(green_center_x > 0 and green_center_x < 100):
+                                self.gTurn = 1
+                            elif(green_center_x >= 100 and green_center_x < 220):
+                                self.gTurn = 2
+                            elif(green_center_x >= 220 and green_center_x < 280):
+                                self.gTurn = 3
+                            else:
+                                self.gTurn = 0
+                            self.get_logger().info("green detect x: %f y: %f" %(green_center_x, green_center_y))
+                            cv2.rectangle(current_frame, (green_center_x - 10, green_center_y - 10), (green_center_x + 10, green_center_y + 10) , (0,255,0), 1)
+                            cv2.circle(current_frame, (green_center_x, green_center_y), 5, (0, 255, 0), -1)  # Draw green dot 
+                    else:
+                        self.gTurn = 0  
+                        self.y_green = 0
+
+                        
+
+        if len(red_contours) > 0:
+            
+            contoursAreaRed = []
+            for c in red_contours:
+                areaRed = cv2.contourArea(c)
+                if areaRed > 500:
+                    contoursAreaRed.append(c)
+            if len(contoursAreaRed)>0:
+                ymaxRed = 0
+                xmaxRed = 0
+                indexRed = 0
+                iRed = 0
+                for c in contoursAreaRed:
+                    xRed,yRed,w,h = cv2.boundingRect(c)
+                    if yRed > ymaxRed:
+                        ymaxRed = yRed
+                        xmaxRed = xRed
+                        indexRed = iRed
+                    iRed+= 1
+                self.xRed = xmaxRed
+                self.yRed = ymaxRed
+                    if self.walkLeft == True:
+                        self.ldval = self.region_['left']
+                        self.camval = 70
+                    elif self.walkRight == True:
+                        self.ldval = self.region_['right']
+                        self.camval = 250
+                    if(red_center_y > 55 and red_center_y < 180):
+                        if self.walkLeft == True:
+                            if(self.ldval < 0.5 and red_center_x < self.camval):
+                                pass
+                            else:
+                                self.y_red = red_center_y
+                                self.red = True
+                                self.r = True
+                                if(red_center_x > 60 and red_center_x < 100):
+                                    self.rTurn = 3
+                                elif(red_center_x >= 100 and red_center_x < 220):
+                                    self.rTurn = 2
+                                elif(red_center_x >= 220 and red_center_x < 320):
+                                    self.rTurn = 1
+                                else:
+                                    self.rTurn = 0
+                                self.get_logger().info("red detect x: %f y: %f" %(red_center_x, red_center_y))
+                                cv2.rectangle(current_frame, (red_center_x - 10, red_center_y - 10), (red_center_x + 10, red_center_y + 10) , (0,255,0), 1)
+                                cv2.circle(current_frame, (red_center_x, red_center_y), 5, (0, 255, 0), -1)  # Draw green dot   
+        
+                        elif self.walkRight == True:
+                            if(self.ldval < 0.5 and red_center_x > self.camval):
+                                pass
+                            else:
+                                self.y_red = red_center_y
+                                self.red = True
+                                self.r = True
+                                if(red_center_x > 80 and red_center_x < 100):
+                                    self.rTurn = 3
+                                elif(red_center_x >= 100 and red_center_x < 220):
+                                    self.rTurn = 2
+                                elif(red_center_x >= 220 and red_center_x < 320):
+                                    self.rTurn = 1
+                                else:
+                                    self.rTurn = 0
+                                self.get_logger().info("red detect x: %f y: %f" %(red_center_x, red_center_y))
+                                cv2.rectangle(current_frame, (red_center_x - 10, red_center_y - 10), (red_center_x + 10, red_center_y + 10) , (0,255,0), 1)
+                                cv2.circle(current_frame, (red_center_x, red_center_y), 5, (0, 255, 0), -1)  # Draw green dot   
+                        elif (self.walkRight == False and self.walkLeft == False):
+                            self.y_red = red_center_y
+                            self.red = True
+                            self.r = True
+                            if(red_center_x > 80 and red_center_x < 100):
+                                self.rTurn = 3
+                            elif(red_center_x >= 100 and red_center_x < 220):
+                                self.rTurn = 2
+                            elif(red_center_x >= 220 and red_center_x < 320):
+                                self.rTurn = 1
+                            else:
+                                self.rTurn = 0
+                            self.get_logger().info("red detect x: %f y: %f" %(red_center_x, red_center_y))
+                            cv2.rectangle(current_frame, (red_center_x - 10, red_center_y - 10), (red_center_x + 10, red_center_y + 10) , (0,255,0), 1)
+                            cv2.circle(current_frame, (red_center_x, red_center_y), 5, (0, 255, 0), -1)  # Draw green dot 
+                    else:
+                        self.rTurn = 0
+                        self.y_red = 0
+
+                        
+        # cv2.line(current_frame, (100,0), (100,240), (100,0,255),1)
+        # cv2.line(current_frame, (220,0), (220,240), (100,240,10),1)
+
+        # Display image
+        #cv2.imshow("green", green)
+        # cv2.imshow("red", red)
+        # cv2.imshow("mixed", mixed)
+
+        # cv2.imshow("hhb",current_frame)
+        cv2.waitKey(1)
+        
+
+
+    def main_cb(self):
+        if(self.region_['front'] > 0):
+            if(self.step == 1):
+                if(self.stepCount == 12):
+                    self.get_logger().info("12 12 12 12 12 12 12 12")
+                    self.imuFollow(self.angle, 20)
+                    if(self.yaw > 350 or self.yaw < 10):
+                        if(self.region_['front'] < self.beginFront - 0.00):
+                            self.get_logger().info("step: %d angle: %d stepCount: %d yaw: %f left: %f right: %f front: %f " %(
+                                    self.step,
+                                    self.angle,
+                                    self.stepCount,
+                                    self.yaw,
+                                    self.region_['left'],
+                                    self.region_['right'],
+                                    self.region_['front']))
+                            mMotor.stop()
+                            time.sleep(100)
+                        else:
+                            mMotor.start(-40)  
+                else:           
+                    if(self.region_['right'] > 1.0):
+                        self.step = 2
+                        self.right = True
+                        if(self.checkClockwise == True):
+                            self.clockwise = False
+                            self.checkClockwise = False
+                        if(self.clockwise == False):
+                            self.tempAngle = self.angle
+                            self.angle = self.angle + 90
+                            if(self.angle < 0):
+                                self.angle = 270
+                            elif(self.angle > 359):
+                                self.angle = 0
+                        self.time = time.time()*1000
+                    
+                    elif(self.region_['left'] > 1.0):
+                        self.step = 2
+                        self.left = False
+                        if(self.checkClockwise == True):
+                            self.clockwise = True
+                            self.checkClockwise = False
+                        if(self.clockwise == True):
+                            self.tempAngle = self.angle
+                            self.angle = self.angle - 90
+                            if(self.angle > 359):
+                                self.angle = 0
+                            elif(self.angle < 0):
+                                self.angle = 270
+                        self.time = time.time()*1000
+                    self.imuFollow(self.angle, 15)
+                    mMotor.start(-100) 
+
+            if(self.step == 2):
+                self.imuFollow(self.tempAngle, 15)
+                if(self.stepCount == 11):
+                    if(self.clockwise == False):
+                        if(self.region_['front'] < self.beginLeft + 0.1):
+                            self.step = 3 
+                    else:
+                        if(self.region_['front'] < self.beginRight + 0.1):
+                            self.step = 3 
+                else:
+                    if(float((time.time()*1000) - self.time) > 200):
+                        self.step = 3 
+                mMotor.start(-100) 
+            if(self.step == 3):
+                self.imuFollow(self.angle, 15)
+                if(abs(self.yaw-self.angle)<40):
+                    self.get_logger().info("out")
+                    self.step = 4
+                    self.time = time.time()*1000
+                    
+                mMotor.start(-100) 
+            if(self.step == 4):
+                self.imuFollow(self.angle, 15)
+                # self.get_logger().info("Time: %d" %(float((time.time()*1000) - self.time)))
+                
+                if(self.stepCount == 11):
+                    if(float((time.time()*1000) - self.time) > 400):
+                        self.step = 1
+                        self.stepCount = self.stepCount + 1
+                    mMotor.start(-40)       
+                else:
+                    if(float((time.time()*1000) - self.time) > 900):
+                        self.step = 1
+                        self.stepCount = self.stepCount + 1
+                    mMotor.start(-70)        
+    
+        self.get_logger().info("step: %d angle: %d stepCount: %d yaw: %f left: %f right: %f front: %f " %(
+                                    self.step,
+                                    self.angle,
+                                    self.stepCount,
+                                    self.yaw,
+                                    self.region_['left'],
+                                    self.region_['right'],
+                                    self.region_['front']))
+
+
+def handler(signum, frame):
+    pi = pigpio.pi()
+    pi.set_mode(Servo_Pin, pigpio.OUTPUT)
+    pi.set_PWM_frequency(Servo_Pin, 50)
+    pi.set_servo_pulsewidth(Servo_Pin, 800)
+    pi.set_PWM_frequency(Servo_Pin, 0)
+
+signal.signal(signal.SIGINT, handler)
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    minimal_subscriber = Future()
+
+    rclpy.spin(minimal_subscriber)
+    minimal_subscriber.image_callBack()
+    minimal_subscriber.imu_callBack()
+    minimal_subscriber.laser_callBack()
+    minimal_subscriber.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
+
